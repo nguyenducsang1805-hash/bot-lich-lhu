@@ -393,4 +393,22 @@ app.add_handler(CommandHandler("set_morn", set_morn_cmd))
 app.add_handler(CommandHandler("check", check_cmd))
 
 if __name__ == "__main__":
+    from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot LHU is running 24/7!")
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
+    server.serve_forever()
+
+if __name__ == "__main__":
+    # Chạy server web song song với bot để Render cấp gói FREE $0
+    Thread(target=run_web, daemon=True).start()
     app.run_polling()
