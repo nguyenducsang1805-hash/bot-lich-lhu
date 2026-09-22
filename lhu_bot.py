@@ -351,36 +351,41 @@ async def check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 scheduler = AsyncIOScheduler(timezone="Asia/Ho_Chi_Minh")
 
 async def post_init(application):
-    cfg = load_config()
-
-    # 1. Báo lịch tối hôm trước (mặc định 20:30)
+    # CỐ ĐỊNH GIỜ THEO CHUẨN GIỜ VIỆT NAM (Asia/Ho_Chi_Minh)
+    
+    # 1. Tự động báo lịch ngày mai vào đúng 20:00 tối mỗi ngày
     scheduler.add_job(
         lambda: send_evening_notification(application),
         trigger="cron",
-        hour=cfg.get("eve_hour", 20),
-        minute=cfg.get("eve_minute", 30),
-        id="eve_job"
+        hour=20,
+        minute=0,
+        timezone="Asia/Ho_Chi_Minh",
+        id="eve_job",
+        replace_existing=True
     )
 
-    # 2. Báo lịch sáng hôm đó (mặc định 06:30)
+    # 2. Tự động nhắc lịch hôm nay vào đúng 06:00 sáng mỗi ngày
     scheduler.add_job(
         lambda: send_morning_notification(application),
         trigger="cron",
-        hour=cfg.get("morn_hour", 6),
-        minute=cfg.get("morn_minute", 30),
-        id="morn_job"
+        hour=6,
+        minute=0,
+        timezone="Asia/Ho_Chi_Minh",
+        id="morn_job",
+        replace_existing=True
     )
 
-    # 3. Tự động kiểm tra thay đổi lịch mỗi 30 phút một lần
+    # 3. Tự động quét thay đổi lịch mỗi 30 phút một lần
     scheduler.add_job(
         lambda: check_schedule_updates(application),
         trigger="interval",
         minutes=30,
-        id="check_update_job"
+        id="check_update_job",
+        replace_existing=True
     )
 
     scheduler.start()
-    print(">>> Bot Calen LHU đã sẵn sàng chạy ngầm!")
+    print(">>> Bot Calen LHU đã sẵn sàng chạy ngầm theo giờ Việt Nam!")
 
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
