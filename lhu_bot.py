@@ -1,6 +1,9 @@
 import json
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from threading import Thread
 import requests
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update
@@ -12,7 +15,6 @@ MY_CHAT_ID = "8060536211"
 STUDENT_ID = "125000887"
 AUTH_TOKEN = "Bearer UZy69OUHzvzsDXilDrjmcJFQ7dzMCAyYjkiyzGoplvY.9FDB39487782900E"
 
-CONFIG_FILE = "bot_settings.json"
 CACHE_FILE = "lhu_schedule_cache.json"
 
 # ================= 2. BỘ KẾT NỐI API CALEN LHU =================
@@ -69,7 +71,7 @@ def fetch_lhu_schedule(student_id: str):
                 
             teacher = item.get("GiaoVien", "")
             group = item.get("TenNhom", "")
-            status = item.get("TinhTrang", 0) # Tình trạng lớp học
+            status = item.get("TinhTrang", 0)
             
             start_iso = item.get("ThoiGianBD", "")
             end_iso = item.get("ThoiGianKT", "")
@@ -100,21 +102,15 @@ def fetch_lhu_schedule(student_id: str):
         print(f"[{datetime.now()}] Lỗi kết nối Calen LHU: {e}")
         return []
 
-# ================= 3. SO SÁNH & PHÁT HIỆN CHI TIẾT THAY ĐỔI =================
+# ================= 3. SO SÁNH & PHÁT HIỆN THAY ĐỔI =================
 def detect_schedule_changes(old_list, new_list):
-    """
-    So sánh chi tiết từng môn để phát hiện: Thêm môn, Hủy môn, Đổi phòng, Đổi giờ
-    """
     changes = []
-    
-    # Tạo map tra cứu theo định danh môn: ID hoặc (Tên Môn + Ngày)
     old_map = {f"{x['subject']}_{x['date']}_{x['time']}": x for x in old_list}
     new_map = {f"{x['subject']}_{x['date']}_{x['time']}": x for x in new_list}
 
-    # 1. Kiểm tra môn mới được thêm vào
+    # Kiểm tra môn mới hoặc đổi phòng/giờ
     for key, item in new_map.items():
         if key not in old_map:
-            # Kiểm tra xem có phải cùng môn đổi giờ/đổi phòng không
             same_subject_old = [v for k, v in old_map.items() if v['subject'] == item['subject'] and v['date'] == item['date']]
             if same_subject_old:
                 old_item = same_subject_old[0]
@@ -126,38 +122,25 @@ def detect_schedule_changes(old_list, new_list):
                 if diffs:
                     changes.append(f"🔄 *Cập nhật môn: {item['subject']}* (Ngày {item['date']}):\n" + "\n".join(diffs))
             else:
-                changes.append(f"➕ *Môn học mới được thêm vào:*\n• *{item['subject']}*\n📅 Ngày: `{item['date']}` | ⏰ `{item['time']}` | 📍 `{item['room']}`")
+                changes.append(
+                    f"➕ *Môn học mới:*\n"
+                    f"• *{item['subject']}*\n"
+                    f"   📅 Ngày: `{item['date']}`\n"
+                    f"   ⏰ Giờ: `{item['time']}`\n"
+                    f"   📍 Phòng: `{item['room']}`"
+                )
 
-    # 2. Kiểm tra môn bị hủy / báo nghỉ
+    # Kiểm tra môn bị hủy / báo nghỉ
     for key, item in old_map.items():
         if key not in new_map:
             same_subject_new = [v for k, v in new_map.items() if v['subject'] == item['subject'] and v['date'] == item['date']]
             if not same_subject_new:
-                changes.append(f"❌ *Báo nghỉ / Hủy môn:*\n• *{item['subject']}*\n📅 Ngày học bị hủy: `{item['date']}` ({item['time']})")
+                changes.append(f"❌ *Báo nghỉ / Hủy môn:*\n• *{item['subject']}*\n   📅 Ngày hủy: `{item['date']}` ({item['time']})")
 
     return changes
 
-# ================= 4. CẤU HÌNH & LẬP LỊCH THÔNG BÁO =================
-def load_config():
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {
-            "morn_hour": 6, "morn_minute": 30,    # Giờ báo sáng
-            "eve_hour": 20, "eve_minute": 30,     # Giờ báo tối hôm trước
-            "chat_id": MY_CHAT_ID
-        }
-
-def save_config(cfg):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-
+# ================= 4. CÁC TÁC VỤ LẬP LỊCH TỰ ĐỘNG =================
 async def check_schedule_updates(app):
-    """Quét ngầm mỗi 30 phút: Phát hiện thay đổi lịch là gửi tin báo ngay"""
-    cfg = load_config()
-    chat_id = cfg.get("chat_id", MY_CHAT_ID)
-
     current_schedule = fetch_lhu_schedule(STUDENT_ID)
     if not current_schedule:
         return
@@ -173,16 +156,13 @@ async def check_schedule_updates(app):
         changes = detect_schedule_changes(old_schedule, current_schedule)
         if changes:
             alert_msg = "🚨 **CẢNH BÁO: LỊCH HỌC LHU CÓ THAY ĐỔI MỚI!**\n\n" + "\n\n".join(changes)
-            await app.bot.send_message(chat_id=chat_id, text=alert_msg, parse_mode="Markdown")
+            await app.bot.send_message(chat_id=MY_CHAT_ID, text=alert_msg, parse_mode="Markdown")
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump({"schedule": current_schedule}, f, ensure_ascii=False, indent=2)
 
 async def send_evening_notification(app):
-    """Yêu cầu 2: Báo lịch của NGÀY MAI vào mỗi buổi tối"""
-    cfg = load_config()
-    chat_id = cfg.get("chat_id", MY_CHAT_ID)
-
+    """Gửi lúc 20:00 tối: Báo lịch ngày mai (giờ và phòng tách riêng dòng)"""
     vn_tz = timezone(timedelta(hours=7))
     tomorrow = datetime.now(vn_tz) + timedelta(days=1)
     tomorrow_ymd = tomorrow.strftime("%Y-%m-%d")
@@ -192,7 +172,7 @@ async def send_evening_notification(app):
     tomorrow_classes = [c for c in schedule if c.get("date") == tomorrow_ymd]
 
     if not tomorrow_classes:
-        msg = f"🌙 **LỊCH HỌC NGÀY MAI ({tomorrow_dmy}):**\nNgày mai bạn không có lịch học! Tối nay có thể thoải mái nghỉ ngơi nhé."
+        msg = f"🌙 **LỊCH HỌC NGÀY MAI ({tomorrow_dmy}):**\nNgày mai bạn không có lịch học! Tối nay nghỉ ngơi thoải mái nhé."
     else:
         msg = f"🌙 **LỊCH HỌC NGÀY MAI ({tomorrow_dmy}):**\n\n"
         for idx, c in enumerate(tomorrow_classes, 1):
@@ -202,15 +182,12 @@ async def send_evening_notification(app):
             if c['teacher']:
                 msg += f"   👨‍🏫 GV: {c['teacher']}\n"
             msg += "\n"
-        msg += "👉 Chuẩn bị bài vở và đồ dùng từ tối nay bạn nhé!"
+        msg += "👉 Nhớ chuẩn bị bài vở từ tối nay nhé!"
 
-    await app.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+    await app.bot.send_message(chat_id=MY_CHAT_ID, text=msg, parse_mode="Markdown")
 
 async def send_morning_notification(app):
-    """Báo lịch vào buổi sáng của ngày hôm đó"""
-    cfg = load_config()
-    chat_id = cfg.get("chat_id", MY_CHAT_ID)
-
+    """Gửi lúc 06:00 sáng: Nhắc lịch hôm nay (giờ và phòng tách riêng dòng)"""
     vn_tz = timezone(timedelta(hours=7))
     now = datetime.now(vn_tz)
     today_ymd = now.strftime("%Y-%m-%d")
@@ -220,7 +197,7 @@ async def send_morning_notification(app):
     today_classes = [c for c in schedule if c.get("date") == today_ymd]
 
     if today_classes:
-        msg = f"☀️ **LỊCH HỌC HÔM NAY ({today_dmy}):**\n\n"
+        msg = f"📚 **LỊCH HỌC HÔM NAY ({today_dmy}):**\n\n"
         for idx, c in enumerate(today_classes, 1):
             msg += f"*{idx}. {c['subject']}*\n"
             msg += f"   ⏰ Giờ: `{c['time']}`\n"
@@ -228,20 +205,16 @@ async def send_morning_notification(app):
             if c['teacher']:
                 msg += f"   👨‍🏫 GV: {c['teacher']}\n"
             msg += "\n"
-        await app.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+        await app.bot.send_message(chat_id=MY_CHAT_ID, text=msg, parse_mode="Markdown")
 
-# ================= 5. CÁC LỆNH ĐIỀU KHIỂN BOT =================
+# ================= 5. CÁC LỆNH ĐIỀU KHIỂN =================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "👋 **Chào Sang! Bot Lịch học LHU phiên bản nâng cấp đã hoạt động.**\n\n"
-        "📌 **Lệnh tra cứu lịch:**\n"
+        "👋 **Chào Sang! Bot Lịch học LHU đã hoạt động 24/7.**\n\n"
         "• `/today` : Xem lịch hôm nay\n"
         "• `/tomorrow` : Xem lịch ngày mai\n"
-        "• `/week` : Xem toàn bộ lịch trong tuần\n\n"
-        "⚙️ **Lệnh cài đặt giờ thông báo:**\n"
-        "• `/set_eve HH:MM` : Cài giờ báo tối hôm trước (VD: `/set_eve 20:30`)\n"
-        "• `/set_morn HH:MM` : Cài giờ báo sáng (VD: `/set_morn 06:15`)\n"
-        "• `/check` : Ép kiểm tra thay đổi lịch ngay lập tức"
+        "• `/week` : Xem toàn bộ lịch tuần này\n"
+        "• `/check` : Ép kiểm tra thay đổi lịch ngay"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -261,7 +234,8 @@ async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"📚 **LỊCH HỌC HÔM NAY ({today_dmy}):**\n\n"
     for idx, c in enumerate(today_classes, 1):
         msg += f"*{idx}. {c['subject']}*\n"
-        msg += f"   ⏰ Giờ: `{c['time']}` | 📍 Phòng: `{c['room']}`\n"
+        msg += f"   ⏰ Giờ: `{c['time']}`\n"
+        msg += f"   📍 Phòng: `{c['room']}`\n"
         if c['teacher']:
             msg += f"   👨‍🏫 GV: {c['teacher']}\n"
         msg += "\n"
@@ -283,7 +257,8 @@ async def tomorrow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"📚 **LỊCH HỌC NGÀY MAI ({tomorrow_dmy}):**\n\n"
     for idx, c in enumerate(tomorrow_classes, 1):
         msg += f"*{idx}. {c['subject']}*\n"
-        msg += f"   ⏰ Giờ: `{c['time']}` | 📍 Phòng: `{c['room']}`\n"
+        msg += f"   ⏰ Giờ: `{c['time']}`\n"
+        msg += f"   📍 Phòng: `{c['room']}`\n"
         if c['teacher']:
             msg += f"   👨‍🏫 GV: {c['teacher']}\n"
         msg += "\n"
@@ -303,57 +278,39 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             d_display = c['date']
 
         msg += f"*{idx}. {c['subject']}*\n"
-        msg += f"   📅 Ngày: `{d_display}` | ⏰ `{c['time']}`\n"
+        msg += f"   📅 Ngày: `{d_display}`\n"
+        msg += f"   ⏰ Giờ: `{c['time']}`\n"
         msg += f"   📍 Phòng: `{c['room']}`\n"
         if c['teacher']:
             msg += f"   👨‍🏫 GV: {c['teacher']}\n"
         msg += "\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def set_eve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cài giờ báo tối hôm trước"""
-    if not context.args:
-        await update.message.reply_text("Cú pháp: `/set_eve HH:MM` (Ví dụ: `/set_eve 20:30`)", parse_mode="Markdown")
-        return
-    try:
-        hour, minute = map(int, context.args[0].split(":"))
-        cfg = load_config()
-        cfg["eve_hour"] = hour
-        cfg["eve_minute"] = minute
-        save_config(cfg)
-        scheduler.reschedule_job("eve_job", trigger="cron", hour=hour, minute=minute)
-        await update.message.reply_text(f"✅ Đã đổi giờ báo lịch tối hôm trước sang: `{context.args[0]}` hằng tối.", parse_mode="Markdown")
-    except Exception:
-        await update.message.reply_text("❌ Cú pháp sai! Ví dụ: `/set_eve 21:00`")
-
-async def set_morn_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cài giờ báo sáng"""
-    if not context.args:
-        await update.message.reply_text("Cú pháp: `/set_morn HH:MM` (Ví dụ: `/set_morn 06:15`)", parse_mode="Markdown")
-        return
-    try:
-        hour, minute = map(int, context.args[0].split(":"))
-        cfg = load_config()
-        cfg["morn_hour"] = hour
-        cfg["morn_minute"] = minute
-        save_config(cfg)
-        scheduler.reschedule_job("morn_job", trigger="cron", hour=hour, minute=minute)
-        await update.message.reply_text(f"✅ Đã đổi giờ báo sáng sang: `{context.args[0]}`.", parse_mode="Markdown")
-    except Exception:
-        await update.message.reply_text("❌ Cú pháp sai! Ví dụ: `/set_morn 06:30`")
-
 async def check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Đang quét thay đổi với Calen LHU...")
     await check_schedule_updates(context.application)
     await update.message.reply_text("✅ Quét xong!")
 
-# ================= 6. KHỞI CHẠY HỆ THỐNG =================
+# ================= 6. WEB SERVER GIỮ HOST RENDER SỐNG =================
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot LHU is running 24/7!")
+
+    def log_message(self, format, *args):
+        return
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
+    server.serve_forever()
+
+# ================= 7. KHỞI CHẠY BỘ LẬP LỊCH & BOT =================
 scheduler = AsyncIOScheduler(timezone="Asia/Ho_Chi_Minh")
 
 async def post_init(application):
-    # CỐ ĐỊNH GIỜ THEO CHUẨN GIỜ VIỆT NAM (Asia/Ho_Chi_Minh)
-    
-    # 1. Tự động báo lịch ngày mai vào đúng 20:00 tối mỗi ngày
+    # 1. Báo lịch ngày mai vào đúng 20:00 tối mỗi ngày (Giờ VN)
     scheduler.add_job(
         lambda: send_evening_notification(application),
         trigger="cron",
@@ -364,7 +321,7 @@ async def post_init(application):
         replace_existing=True
     )
 
-    # 2. Tự động nhắc lịch hôm nay vào đúng 06:00 sáng mỗi ngày
+    # 2. Báo lịch hôm nay vào đúng 06:00 sáng mỗi ngày (Giờ VN)
     scheduler.add_job(
         lambda: send_morning_notification(application),
         trigger="cron",
@@ -375,7 +332,7 @@ async def post_init(application):
         replace_existing=True
     )
 
-    # 3. Tự động quét thay đổi lịch mỗi 30 phút một lần
+    # 3. Quét kiểm tra lịch đổi mỗi 30 phút một lần
     scheduler.add_job(
         lambda: check_schedule_updates(application),
         trigger="interval",
@@ -385,7 +342,7 @@ async def post_init(application):
     )
 
     scheduler.start()
-    print(">>> Bot Calen LHU đã sẵn sàng chạy ngầm theo giờ Việt Nam!")
+    print(">>> Bot Calen LHU đã sẵn sàng chạy ngầm theo chuẩn giờ Việt Nam!")
 
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
@@ -393,27 +350,8 @@ app.add_handler(CommandHandler("start", start_cmd))
 app.add_handler(CommandHandler("today", today_cmd))
 app.add_handler(CommandHandler("tomorrow", tomorrow_cmd))
 app.add_handler(CommandHandler("week", week_cmd))
-app.add_handler(CommandHandler("set_eve", set_eve_cmd))
-app.add_handler(CommandHandler("set_morn", set_morn_cmd))
 app.add_handler(CommandHandler("check", check_cmd))
 
 if __name__ == "__main__":
-    from threading import Thread
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import os
-
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot LHU is running 24/7!")
-
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
-    server.serve_forever()
-
-if __name__ == "__main__":
-    # Chạy server web song song với bot để Render cấp gói FREE $0
     Thread(target=run_web, daemon=True).start()
     app.run_polling()
