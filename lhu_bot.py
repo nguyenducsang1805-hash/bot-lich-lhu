@@ -319,8 +319,7 @@ if __name__ == "__main__":
 
     # 3. Quét lịch đổi: mỗi 1800 giây (30 phút)
     job_queue.run_repeating(job_auto_check_updates, interval=1800, first=10, name="update_job")
-    # DÒNG TEST THỬ: Tự động chạy báo tối sau đúng 15 giây kể từ khi bật bot
-    job_queue.run_once(job_evening_reminder, 15)
+   
 
     print(">>> Bot đã chạy với Telegram JobQueue chuẩn giờ Việt Nam!")
     app.run_polling()
