@@ -278,6 +278,20 @@ async def check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Đang quét thay đổi với Calen LHU...")
     await job_auto_check_updates(context)
     await update.message.reply_text("✅ Quét xong!")
+    async def test_alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lệnh test thử tính năng cảnh báo đổi lịch"""
+    fake_old = [
+        {"subject": "Dung sai kỹ thuật đo", "date": "2026-09-23", "time": "07:30 - 10:40", "room": "G302 (Cơ sở V)"}
+    ]
+    fake_new = [
+        {"subject": "Dung sai kỹ thuật đo", "date": "2026-09-23", "time": "07:30 - 10:40", "room": "I209 (Cơ sở VI)"}, # Giả lập đổi phòng
+        {"subject": "Thực tập xưởng", "date": "2026-09-24", "time": "12:50 - 16:45", "room": "Xưởng Cơ khí"} # Giả lập thêm môn
+    ]
+    
+    changes = detect_schedule_changes(fake_old, fake_new)
+    if changes:
+        alert_msg = "🚨 **[TEST THỬ NGHIỆM] CẢNH BÁO: LỊCH HỌC LHU CÓ THAY ĐỔI MỚI!**\n\n" + "\n\n".join(changes)
+        await context.bot.send_message(chat_id=MY_CHAT_ID, text=alert_msg, parse_mode="Markdown")
 
 # ================= 6. WEB SERVER ĐỂ RENDER CHẠY FREE =================
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -319,6 +333,6 @@ if __name__ == "__main__":
 
     # 3. Quét lịch đổi: mỗi 1800 giây (30 phút)
     job_queue.run_repeating(job_auto_check_updates, interval=1800, first=10, name="update_job")
-    
+    app.add_handler(CommandHandler("test_alert", test_alert_cmd))
     print(">>> Bot đã chạy với Telegram JobQueue chuẩn giờ Việt Nam!")
     app.run_polling()
