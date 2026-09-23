@@ -204,7 +204,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/today` : Xem lịch hôm nay\n"
         "• `/tomorrow` : Xem lịch ngày mai\n"
         "• `/week` : Xem lịch cả tuần\n"
-        "• `/check` : Quét kiểm tra lịch đổi ngay lập tức"
+        "• `/check` : Quét kiểm tra lịch đổi ngay lập tức\n"
+        "• `/test_alert` : Thử tính năng cảnh báo đổi lịch"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -278,14 +279,15 @@ async def check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Đang quét thay đổi với Calen LHU...")
     await job_auto_check_updates(context)
     await update.message.reply_text("✅ Quét xong!")
-    async def test_alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def test_alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lệnh test thử tính năng cảnh báo đổi lịch"""
     fake_old = [
         {"subject": "Dung sai kỹ thuật đo", "date": "2026-09-23", "time": "07:30 - 10:40", "room": "G302 (Cơ sở V)"}
     ]
     fake_new = [
-        {"subject": "Dung sai kỹ thuật đo", "date": "2026-09-23", "time": "07:30 - 10:40", "room": "I209 (Cơ sở VI)"}, # Giả lập đổi phòng
-        {"subject": "Thực tập xưởng", "date": "2026-09-24", "time": "12:50 - 16:45", "room": "Xưởng Cơ khí"} # Giả lập thêm môn
+        {"subject": "Dung sai kỹ thuật đo", "date": "2026-09-23", "time": "07:30 - 10:40", "room": "I209 (Cơ sở VI)"},
+        {"subject": "Thực tập xưởng", "date": "2026-09-24", "time": "12:50 - 16:45", "room": "Xưởng Cơ khí"}
     ]
     
     changes = detect_schedule_changes(fake_old, fake_new)
@@ -312,29 +314,25 @@ def run_web():
 if __name__ == "__main__":
     Thread(target=run_web, daemon=True).start()
 
-    # Xây dựng ứng dụng bot
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Đăng ký các lệnh
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("today", today_cmd))
     app.add_handler(CommandHandler("tomorrow", tomorrow_cmd))
     app.add_handler(CommandHandler("week", week_cmd))
     app.add_handler(CommandHandler("check", check_cmd))
+    app.add_handler(CommandHandler("test_alert", test_alert_cmd))
 
-    # Cài đặt tự động gửi qua JobQueue chính chủ của Telegram (Chuẩn giờ Việt Nam)
     job_queue = app.job_queue
 
-    # 1. Báo sáng: 06:00 mỗi ngày
+    # 1. Báo sáng: 06:00 mỗi ngày (Giờ VN)
     job_queue.run_daily(job_morning_reminder, time=time(hour=6, minute=0, tzinfo=VN_TZ), name="morning_job")
 
-    # 2. Báo tối: 20:00 mỗi ngày
+    # 2. Báo tối: 20:00 mỗi ngày (Giờ VN)
     job_queue.run_daily(job_evening_reminder, time=time(hour=20, minute=0, tzinfo=VN_TZ), name="evening_job")
 
     # 3. Quét lịch đổi: mỗi 1800 giây (30 phút)
     job_queue.run_repeating(job_auto_check_updates, interval=1800, first=10, name="update_job")
-    
-    app.add_handler(CommandHandler("test_alert", test_alert_cmd))
-    
+
     print(">>> Bot đã chạy với Telegram JobQueue chuẩn giờ Việt Nam!")
     app.run_polling()
