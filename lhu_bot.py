@@ -278,7 +278,7 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="HTML")
 
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh xuất JSON gốc để tìm biến ẩn Báo Nghỉ của LHU"""
+    """Lệnh xuất JSON gốc thành file để xem biến ẩn Báo Nghỉ"""
     await update.message.reply_text("🔄 Đang móc dữ liệu gốc từ máy chủ LHU...")
     url = "https://tapi.lhu.edu.vn/calen/auth/XemLich_LichSinhVien"
     now = datetime.now(VN_TZ)
@@ -291,25 +291,18 @@ async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         res = requests.post(url, json=payload, headers=headers, timeout=15)
-        data = res.json().get("data", [])
+        data = res.json()
         
-        msg = "🛠 <b>DỮ LIỆU GỐC API LHU (Tuần 28/09):</b>\n\n"
-        for i, table in enumerate(data):
-            if isinstance(table, list):
-                msg += f"<b>Bảng dữ liệu {i} ({len(table)} môn):</b>\n"
-                for item in table:
-                    name = item.get("TenMonHoc", "")
-                    # Chỉ lọc ra 2 môn để so sánh trạng thái
-                    if "Kỹ thuật điện" in name or "Ngoại ngữ 3" in name:
-                        raw_json = json.dumps(item, ensure_ascii=False, indent=2)
-                        msg += f"👉 <b>{name}</b>:\n<pre><code>{html.escape(raw_json)}</code></pre>\n"
+        # Ghi toàn bộ dữ liệu ra file text để gửi qua Telegram
+        debug_filename = "dulieu_lhu.txt"
+        with open(debug_filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+            
+        # Gửi file cho người dùng
+        await update.message.reply_document(document=open(debug_filename, "rb"), filename="DuLieu_TruongLHU.txt")
         
-        if len(msg) > 4000:
-            msg = msg[:4000]
-        await update.message.reply_text(msg, parse_mode="HTML")
     except Exception as e:
         await update.message.reply_text(f"Lỗi: {e}")
-
 # ================= 6. WEB SERVER ĐỂ RENDER CHẠY 24/7 =================
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
