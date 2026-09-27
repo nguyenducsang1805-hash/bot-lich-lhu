@@ -17,8 +17,8 @@ AUTH_TOKEN = "Bearer UZy69OUHzvzsDXilDrjmcJFQ7dzMCAyYjkiyzGoplvY.9FDB39487782900
 
 VN_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
 
-# ================= 2. BỘ KẾT NỐI VÀ BÓC TÁCH TRỰC TIẾP TỪ LHU =================
-def parse_schedule_item(item, force_off=False):
+# ================= 2. BỘ KẾT NỐI VÀ BÓC TÁCH API CALEN LHU =================
+def parse_schedule_item(item):
     item_id = str(item.get("ID") or item.get("NhomID") or "")
     subject = str(item.get("TenMonHoc") or "Môn học").strip()
     room = str(item.get("TenPhong") or "Chưa rõ phòng").strip()
@@ -43,17 +43,19 @@ def parse_schedule_item(item, force_off=False):
         time_end = end_iso.split("T")[1][:5] if "T" in end_iso else ""
         time_str = f"{time_start} - {time_end}".strip(" -")
 
-    # Kiểm tra trực tiếp trạng thái Báo Nghỉ từ trường LHU
+    # Kiểm tra chuẩn xác thuộc tính của từng môn (không dựa vào bảng chung)
     all_text = f"{subject} {room} {note}".lower()
-    is_off = force_off
+    is_off = False
+    
+    # Chỉ đánh dấu nghỉ khi có cờ báo nghỉ thực tế
     if (
         item.get("IsNghi") is True or 
         item.get("DaNghi") is True or
-        item.get("LoaiLich") in [2, "2", "Nghi", "BaoNghi"] or
-        item.get("TrangThai") in [2, "2", "Nghi"] or
-        status not in [0, 1] or
+        str(item.get("LoaiLich")) in ["2", "Nghi", "BaoNghi"] or
+        str(item.get("TrangThai")) in ["2", "Nghi"] or
+        status in [2, 3, "2", "3"] or
         "báo nghỉ" in all_text or
-        "nghỉ" in all_text or
+        "nghỉ dạy" in all_text or
         "hoãn" in all_text
     ):
         is_off = True
@@ -100,15 +102,13 @@ def fetch_lhu_schedule_week(student_id: str, monday_dt: datetime):
         parsed_schedule = []
 
         if isinstance(raw_data, list):
-            for table_idx, sub_list in enumerate(raw_data):
+            for sub_list in raw_data:
                 if isinstance(sub_list, list):
-                    # Nếu API trả về bảng riêng cho lịch báo nghỉ
-                    is_off_table = (table_idx > 0)
                     for item in sub_list:
                         if isinstance(item, dict) and "TenMonHoc" in item:
-                            parsed_schedule.append(parse_schedule_item(item, force_off=is_off_table))
+                            parsed_schedule.append(parse_schedule_item(item))
 
-        # Ưu tiên ghi nhận trạng thái BÁO NGHỈ
+        # Ưu tiên nếu có 2 bản ghi trùng cùng 1 môn mà 1 bản ghi là Báo Nghỉ thì chọn bản ghi Báo Nghỉ
         merged = {}
         for s in parsed_schedule:
             k = f"{s['subject']}_{s['date']}_{s['time']}"
@@ -122,7 +122,7 @@ def fetch_lhu_schedule_week(student_id: str, monday_dt: datetime):
         return []
 
 def fetch_lhu_schedule(student_id: str):
-    """Lấy trực tiếp tuần này và tuần tới"""
+    """Lấy gộp cả tuần này và tuần tới"""
     now = datetime.now(VN_TZ)
     current_monday = now - timedelta(days=now.weekday())
     next_monday = current_monday + timedelta(days=7)
@@ -146,7 +146,6 @@ async def job_morning_reminder(context: ContextTypes.DEFAULT_TYPE):
     today_dmy = now.strftime("%d/%m/%Y")
 
     schedule = fetch_lhu_schedule(STUDENT_ID)
-    # Lọc lấy môn hôm nay mà KHÔNG BỊ BÁO NGHỈ
     today_active_classes = [c for c in schedule if c.get("date") == today_ymd and not c.get("is_off")]
 
     if not today_active_classes:
