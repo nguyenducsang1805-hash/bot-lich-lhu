@@ -21,7 +21,7 @@ VN_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
 
 # ================= 2. BỘ KẾT NỐI VÀ BÓC TÁCH API CALEN LHU =================
 def safe_html(text):
-    """Tránh lỗi sập Telegram khi chuỗi có chứa &, <, >"""
+    """Tránh lỗi sập Telegram khi chuỗi có chứa ký tự đặc biệt"""
     return html.escape(str(text))
 
 def parse_schedule_item(item):
@@ -49,20 +49,11 @@ def parse_schedule_item(item):
         time_end = end_iso.split("T")[1][:5] if "T" in end_iso else ""
         time_str = f"{time_start} - {time_end}".strip(" -")
 
-    # Nhận diện cờ Báo Nghỉ (Tạm thời bằng các từ khóa/biến thông dụng)
+    # ĐÃ MỞ KHÓA BÍ MẬT CỦA LHU: TinhTrang = 1 là BÁO NGHỈ, 0 là ĐI HỌC
     all_text = f"{subject} {room} {note}".lower()
     is_off = False
     
-    if (
-        item.get("IsNghi") is True or 
-        item.get("DaNghi") is True or
-        str(item.get("LoaiLich")) in ["2", "Nghi", "BaoNghi"] or
-        str(item.get("TrangThai")) in ["2", "Nghi"] or
-        status in [2, 3, "2", "3"] or
-        "báo nghỉ" in all_text or
-        "nghỉ dạy" in all_text or
-        "hoãn" in all_text
-    ):
+    if status == 1 or "báo nghỉ" in all_text or "nghỉ dạy" in all_text or "hoãn" in all_text:
         is_off = True
 
     return {
@@ -106,7 +97,7 @@ def fetch_lhu_schedule(student_id: str):
                             if isinstance(item, dict) and "TenMonHoc" in item:
                                 parsed_schedule.append(parse_schedule_item(item))
 
-        # Loại bỏ trùng lặp, ưu tiên trạng thái Báo Nghỉ
+        # Loại bỏ trùng lặp, ưu tiên ghi nhận trạng thái Báo Nghỉ
         unique_dict = {}
         for s in parsed_schedule:
             k = f"{s['subject']}_{s['date']}_{s['time']}"
@@ -127,7 +118,7 @@ def detect_schedule_changes(old_list, new_list):
         if key in old_map:
             old_item = old_map[key]
             
-            # Cảnh báo báo nghỉ
+            # 1. Phát hiện Báo Nghỉ mới
             if not old_item.get("is_off") and item.get("is_off"):
                 changes.append(
                     f"> 🛑 <b>[BÁO NGHỈ]</b>\n"
@@ -137,7 +128,7 @@ def detect_schedule_changes(old_list, new_list):
                     f">    📍 Phòng: <s>{item['room']}</s>"
                 )
             
-            # Đổi phòng, đổi giờ (Chỉ xét nếu môn đó đang đi học)
+            # 2. Phát hiện đổi phòng, đổi giờ (Chỉ xét môn đang đi học)
             elif not item.get("is_off"):
                 if old_item['room'] != item['room']:
                     changes.append(
@@ -160,7 +151,7 @@ def detect_schedule_changes(old_list, new_list):
 
 # ================= 4. CÁC TÁC VỤ TỰ ĐỘNG CHẠY THEO GIỜ =================
 async def job_morning_reminder(context: ContextTypes.DEFAULT_TYPE):
-    """06:00 Sáng: Chỉ hiện các môn cần đi học (Đã lọc bỏ môn nghỉ)"""
+    """06:00 Sáng: Chỉ hiện các môn cần đi học (Ẩn hẳn môn đã báo nghỉ)"""
     now = datetime.now(VN_TZ)
     today_ymd = now.strftime("%Y-%m-%d")
     today_dmy = now.strftime("%d/%m/%Y")
@@ -187,7 +178,7 @@ async def job_morning_reminder(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=MY_CHAT_ID, text=msg, parse_mode="HTML")
 
 async def job_evening_reminder(context: ContextTypes.DEFAULT_TYPE):
-    """20:00 Tối: Báo lịch ngày mai đầy đủ (Gạch ngang môn báo nghỉ)"""
+    """20:00 Tối: Báo lịch ngày mai đầy đủ (Hiển thị form gạch ngang cho môn nghỉ)"""
     tomorrow = datetime.now(VN_TZ) + timedelta(days=1)
     tomorrow_ymd = tomorrow.strftime("%Y-%m-%d")
     tomorrow_dmy = tomorrow.strftime("%d/%m/%Y")
@@ -217,7 +208,7 @@ async def job_evening_reminder(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=MY_CHAT_ID, text=msg, parse_mode="HTML")
 
 async def job_auto_check_updates(context: ContextTypes.DEFAULT_TYPE):
-    """Quét ngầm 15 phút: Báo khẩn cấp ngay nếu có thay đổi"""
+    """Quét ngầm 15 phút: Cảnh báo khẩn cấp ngay nếu trường đổi lịch"""
     current_schedule = fetch_lhu_schedule(STUDENT_ID)
     if not current_schedule:
         return
@@ -237,17 +228,18 @@ async def job_auto_check_updates(context: ContextTypes.DEFAULT_TYPE):
             alert_msg = "⚡ <b>THÔNG BÁO CẬP NHẬT LỊCH HỌC</b>\n\n" + "\n\n".join(changes)
             await context.bot.send_message(chat_id=MY_CHAT_ID, text=alert_msg, parse_mode="HTML")
 
+    # Lưu lại lịch mới vào cache để làm gốc cho đợt quét 15 phút kế tiếp
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump({"schedule": current_schedule}, f, ensure_ascii=False, indent=2)
 
-# ================= 5. CÁC LỆNH ĐIỀU KHIỂN & LỆNH DEBUG =================
+# ================= 5. CÁC LỆNH ĐIỀU KHIỂN =================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "👋 <b>Bot Calen LHU đã sẵn sàng 24/7!</b>\n\n"
         "• /today : Lịch hôm nay (Chỉ hiện môn cần học)\n"
         "• /tomorrow : Lịch ngày mai (Báo rõ môn nào được nghỉ)\n"
         "• /week : Danh sách lịch học sắp tới\n"
-        "• /debug : Lấy file JSON gốc từ trường (Dùng để sửa lỗi báo nghỉ)"
+        "• /debug : Xuất file JSON dữ liệu LHU gốc"
     )
     await update.message.reply_text(msg, parse_mode="HTML")
 
@@ -282,6 +274,8 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"   ⏰ Giờ: <code>{c['time']}</code>\n"
             msg += f"   📍 Phòng: <code>{c['room']}</code>\n"
         msg += "\n"
+        
+        # Cắt nhỏ tin nhắn tránh vượt giới hạn Telegram
         if len(msg) > 3500:
             await update.message.reply_text(msg, parse_mode="HTML")
             msg = ""
@@ -289,12 +283,12 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="HTML")
 
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh xuất JSON gốc thành file txt để tránh lỗi parse entities của Telegram"""
+    """Xuất file gốc để debug (không bao giờ sập HTML)"""
     await update.message.reply_text("🔄 Đang móc dữ liệu gốc từ máy chủ LHU...")
     url = "https://tapi.lhu.edu.vn/calen/auth/XemLich_LichSinhVien"
     now = datetime.now(VN_TZ)
     monday = now - timedelta(days=now.weekday())
-    next_monday = monday + timedelta(days=7) # Quét tuần 28/09
+    next_monday = monday + timedelta(days=7)
     monday_iso = next_monday.strftime("%Y-%m-%dT00:00:00.000Z")
 
     payload = {"StudentID": STUDENT_ID, "Ngay": monday_iso, "PageIndex": 1, "PageSize": 100}
@@ -303,16 +297,11 @@ async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         res = requests.post(url, json=payload, headers=headers, timeout=15)
         data = res.json()
-        
-        # Ghi toàn bộ dữ liệu ra file text
         debug_filename = "DuLieu_TruongLHU.txt"
         with open(debug_filename, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
-            
-        # Gửi thẳng file cho người dùng qua Telegram
         with open(debug_filename, "rb") as f:
             await update.message.reply_document(document=f, filename="DuLieu_TruongLHU.txt")
-            
     except Exception as e:
         await update.message.reply_text(f"Lỗi khi lấy dữ liệu: {e}")
 
@@ -338,16 +327,18 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("today", today_cmd))
     app.add_handler(CommandHandler("tomorrow", tomorrow_cmd))
-    app.add_handler(CommandHandler("tomorow", tomorrow_cmd))
+    app.add_handler(CommandHandler("tomorow", tomorrow_cmd)) # Hỗ trợ gõ sai chính tả
     app.add_handler(CommandHandler("week", week_cmd))
     app.add_handler(CommandHandler("debug", debug_cmd))
 
     job_queue = app.job_queue
+    
+    # Lịch báo tự động hằng ngày
     job_queue.run_daily(job_morning_reminder, time=time(hour=6, minute=0, tzinfo=VN_TZ), name="morning_job")
     job_queue.run_daily(job_evening_reminder, time=time(hour=20, minute=0, tzinfo=VN_TZ), name="evening_job")
     
-    # Quét ngầm mỗi 15 phút (900s), đợi 30s sau khi bật để đọc cache an toàn
+    # Quét ngầm mỗi 15 phút (900s), chạy sau 30s từ lúc bot khởi động
     job_queue.run_repeating(job_auto_check_updates, interval=900, first=30, name="update_job")
 
-    print(">>> Bot Calen LHU đã sẵn sàng chạy ngầm không lỗi!")
+    print(">>> Bot Calen LHU đã sẵn sàng chạy ngầm hoàn hảo!")
     app.run_polling()
