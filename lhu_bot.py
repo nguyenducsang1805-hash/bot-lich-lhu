@@ -51,7 +51,6 @@ def parse_schedule_item(item):
     all_text = f"{subject} {room} {note}".lower()
     is_off = False
     
-    # Đã thêm từ khóa "nghỉ lễ" để quét trọn mọi lý do nghỉ
     if status == 1 or "báo nghỉ" in all_text or "nghỉ dạy" in all_text or "hoãn" in all_text or "nghỉ lễ" in all_text:
         is_off = True
 
@@ -67,7 +66,7 @@ def parse_schedule_item(item):
     }
 
 def fetch_lhu_schedule(student_id: str):
-    """Quét 3 TUẦN LIÊN TIẾP để luôn đảm bảo theo dõi sát sao ít nhất 10-21 ngày tới"""
+    """Quét 3 TUẦN LIÊN TIẾP (21 ngày tới)"""
     url = "https://tapi.lhu.edu.vn/calen/auth/XemLich_LichSinhVien"
     now = datetime.now(VN_TZ)
     current_monday = now - timedelta(days=now.weekday())
@@ -119,6 +118,7 @@ def detect_schedule_changes(old_list, new_list):
         if key in old_map:
             old_item = old_map[key]
             
+            # 1. Báo nghỉ mới
             if not old_item.get("is_off") and item.get("is_off"):
                 changes.append(
                     f"> 🛑 <b>[BÁO NGHỈ / NGHỈ LỄ]</b>\n"
@@ -128,6 +128,7 @@ def detect_schedule_changes(old_list, new_list):
                     f">    📍 Phòng: <s>{item['room']}</s>"
                 )
             
+            # 2. Đổi phòng / Đổi giờ
             elif not item.get("is_off"):
                 if old_item['room'] != item['room']:
                     changes.append(
@@ -145,6 +146,32 @@ def detect_schedule_changes(old_list, new_list):
                         f">    ⏰ Giờ: <s>{old_item['time']}</s> ➔ <b><code>{item['time']}</code></b>\n"
                         f">    📍 Phòng: <code>{item['room']}</code>"
                     )
+        else:
+            # 3. Lịch học được thêm mới (thay chữ theo yêu cầu)
+            if not item.get("is_off"):
+                changes.append(
+                    f"> ➕ <b>[LỊCH HỌC CÓ THAY ĐỔI]</b>\n"
+                    f"> • Môn: <b>{item['subject']}</b>\n"
+                    f">    📅 Ngày: <code>{item['date']}</code>\n"
+                    f">    ⏰ Giờ: <code>{item['time']}</code>\n"
+                    f">    📍 Phòng: <code>{item['room']}</code>\n"
+                    f">    👨‍🏫 GV: {item['teacher']}"
+                )
+
+    # 4. TRƯỜNG HỢP MÔN HỌC BỊ XÓA HẲN KHỎI HỆ THỐNG
+    for key, old_item in old_map.items():
+        if key not in new_map and not old_item.get("is_off"):
+            try:
+                item_date = datetime.strptime(old_item['date'], "%Y-%m-%d").date()
+                today_date = datetime.now(VN_TZ).date()
+                if item_date >= today_date:
+                    changes.append(
+                        f"> ❌ <b>[LỊCH BỊ HỦY BỎ]</b>\n"
+                        f"> • Môn: <s><b>{old_item['subject']}</b></s>\n"
+                        f">    📅 Ngày: <code>{old_item['date']}</code> (Trường đã xóa tiết này khỏi hệ thống)"
+                    )
+            except:
+                pass
 
     return changes
 
@@ -221,7 +248,8 @@ async def job_auto_check_updates(context: ContextTypes.DEFAULT_TYPE):
     if old_schedule:
         changes = detect_schedule_changes(old_schedule, current_schedule)
         if changes:
-            alert_msg = "⚡ <b>THÔNG BÁO CẬP NHẬT LỊCH HỌC (TỪ TRƯỜNG LHU)</b>\n\n" + "\n\n".join(changes)
+            # Đã đổi dòng thông báo ở đây theo đúng yêu cầu
+            alert_msg = "⚡ <b>LỊCH HỌC CÓ THAY ĐỔI</b>\n\n" + "\n\n".join(changes)
             await context.bot.send_message(chat_id=MY_CHAT_ID, text=alert_msg, parse_mode="HTML")
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
