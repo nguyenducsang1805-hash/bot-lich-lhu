@@ -318,6 +318,7 @@ def run_web():
 
 # ================= 7. KHỞI TẠO VÀ CHẠY BOT =================
 if __name__ == "__main__":
+    Thread(target=run_web, daemon=True).start()
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_cmd))
