@@ -6,18 +6,17 @@ from datetime import datetime, timedelta, time, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
 import requests
-import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# ================= 1. CẤU HÌNH HỆ THỐNG =================
+# ================= 1. CẤU HÌNH HỆ THÔNG =================
 TELEGRAM_BOT_TOKEN = "8856605368:AAFI2s8Ma3GlPoJAC19rpLxlibO-7LwmU3U"
 MY_CHAT_ID = "8060536211"
 STUDENT_ID = "125000887"
 AUTH_TOKEN = "Bearer UZy69OUHzvzsDXilDrjmcJFQ7dzMCAyYjkiyzGoplvY.9FDB39487782900E"
 
 CACHE_FILE = "lhu_schedule_cache.json"
-VN_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
+VN_TZ = timezone(timedelta(hours=7))
 
 # ================= 2. BỘ KẾT NỐI VÀ BÓC TÁCH API CALEN LHU =================
 def safe_html(text):
@@ -123,9 +122,9 @@ def detect_schedule_changes(old_list, new_list):
                 changes.append(
                     f"> 🛑 <b>[BÁO NGHỈ / NGHỈ LỄ]</b>\n"
                     f"> • Môn: <s><b>{item['subject']}</b></s>\n"
-                    f">    📅 Ngày: <code>{item['date']}</code>\n"
-                    f">    ⏰ Giờ: <s>{item['time']}</s>\n"
-                    f">    📍 Phòng: <s>{item['room']}</s>"
+                    f">   📅 Ngày: <code>{item['date']}</code>\n"
+                    f">   ⏰ Giờ: <s>{item['time']}</s>\n"
+                    f">   📍 Phòng: <s>{item['room']}</s>"
                 )
             
             # 2. Đổi phòng / Đổi giờ
@@ -134,28 +133,28 @@ def detect_schedule_changes(old_list, new_list):
                     changes.append(
                         f"> 🔄 <b>[ĐỔI PHÒNG]</b>\n"
                         f"> • Môn: <b>{item['subject']}</b>\n"
-                        f">    📅 Ngày: <code>{item['date']}</code>\n"
-                        f">    ⏰ Giờ: <code>{item['time']}</code>\n"
-                        f">    📍 Phòng: <s>{old_item['room']}</s> ➔ <b><code>{item['room']}</code></b>"
+                        f">   📅 Ngày: <code>{item['date']}</code>\n"
+                        f">   ⏰ Giờ: <code>{item['time']}</code>\n"
+                        f">   📍 Phòng: <s>{old_item['room']}</s> ➔ <b><code>{item['room']}</code></b>"
                     )
                 elif old_item['time'] != item['time']:
                     changes.append(
                         f"> ⏰ <b>[ĐỔI GIỜ]</b>\n"
                         f"> • Môn: <b>{item['subject']}</b>\n"
-                        f">    📅 Ngày: <code>{item['date']}</code>\n"
-                        f">    ⏰ Giờ: <s>{old_item['time']}</s> ➔ <b><code>{item['time']}</code></b>\n"
-                        f">    📍 Phòng: <code>{item['room']}</code>"
+                        f">   📅 Ngày: <code>{item['date']}</code>\n"
+                        f">   ⏰ Giờ: <s>{old_item['time']}</s> ➔ <b><code>{item['time']}</code></b>\n"
+                        f">   📍 Phòng: <code>{item['room']}</code>"
                     )
         else:
-            # 3. Lịch học được thêm mới (thay chữ theo yêu cầu)
+            # 3. Lịch học được thêm mới
             if not item.get("is_off"):
                 changes.append(
                     f"> ➕ <b>[LỊCH HỌC CÓ THAY ĐỔI]</b>\n"
                     f"> • Môn: <b>{item['subject']}</b>\n"
-                    f">    📅 Ngày: <code>{item['date']}</code>\n"
-                    f">    ⏰ Giờ: <code>{item['time']}</code>\n"
-                    f">    📍 Phòng: <code>{item['room']}</code>\n"
-                    f">    👨‍🏫 GV: {item['teacher']}"
+                    f">   📅 Ngày: <code>{item['date']}</code>\n"
+                    f">   ⏰ Giờ: <code>{item['time']}</code>\n"
+                    f">   📍 Phòng: <code>{item['room']}</code>\n"
+                    f">   👨‍🏫 GV: {item['teacher']}"
                 )
 
     # 4. TRƯỜNG HỢP MÔN HỌC BỊ XÓA HẲN KHỎI HỆ THỐNG
@@ -168,9 +167,9 @@ def detect_schedule_changes(old_list, new_list):
                     changes.append(
                         f"> ❌ <b>[LỊCH BỊ HỦY BỎ]</b>\n"
                         f"> • Môn: <s><b>{old_item['subject']}</b></s>\n"
-                        f">    📅 Ngày: <code>{old_item['date']}</code> (Trường đã xóa tiết này khỏi hệ thống)"
+                        f">   📅 Ngày: <code>{old_item['date']}</code> (Trường đã xóa tiết này khỏi hệ thống)"
                     )
-            except:
+            except Exception:
                 pass
 
     return changes
@@ -217,10 +216,10 @@ async def job_evening_reminder(context: ContextTypes.DEFAULT_TYPE):
         for idx, c in enumerate(tomorrow_classes, 1):
             if c.get("is_off"):
                 msg += f"> 🛑 <b>{idx}. <s>{c['subject']}</s></b>  👉 <b>[ ĐÃ BÁO NGHỈ ]</b>\n"
-                msg += f">    ⏰ Giờ: <s>{c['time']}</s>\n"
-                msg += f">    📍 Phòng: <s>{c['room']}</s>\n"
+                msg += f">   ⏰ Giờ: <s>{c['time']}</s>\n"
+                msg += f">   📍 Phòng: <s>{c['room']}</s>\n"
                 if c['teacher']:
-                    msg += f">    👨‍🏫 GV: {c['teacher']}\n"
+                    msg += f">   👨‍🏫 GV: {c['teacher']}\n"
             else:
                 msg += f"<b>{idx}. {c['subject']}</b>\n"
                 msg += f"   ⏰ Giờ: <code>{c['time']}</code>\n"
@@ -248,7 +247,6 @@ async def job_auto_check_updates(context: ContextTypes.DEFAULT_TYPE):
     if old_schedule:
         changes = detect_schedule_changes(old_schedule, current_schedule)
         if changes:
-            # Đã đổi dòng thông báo ở đây theo đúng yêu cầu
             alert_msg = "⚡ <b>LỊCH HỌC CÓ THAY ĐỔI</b>\n\n" + "\n\n".join(changes)
             await context.bot.send_message(chat_id=MY_CHAT_ID, text=alert_msg, parse_mode="HTML")
 
@@ -282,14 +280,14 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for idx, c in enumerate(schedule, 1):
         try:
             d_display = datetime.strptime(c['date'], "%Y-%m-%d").strftime("%d/%m/%Y")
-        except:
+        except Exception:
             d_display = c['date']
 
         if c.get("is_off"):
             msg += f"> 🛑 <b>{idx}. <s>{c['subject']}</s> [BÁO NGHỈ]</b>\n"
-            msg += f">    📅 Ngày: <code>{d_display}</code>\n"
-            msg += f">    ⏰ Giờ: <s>{c['time']}</s>\n"
-            msg += f">    📍 Phòng: <s>{c['room']}</s>\n"
+            msg += f">   📅 Ngày: <code>{d_display}</code>\n"
+            msg += f">   ⏰ Giờ: <s>{c['time']}</s>\n"
+            msg += f">   📍 Phòng: <s>{c['room']}</s>\n"
         else:
             msg += f"<b>{idx}. {c['subject']}</b>\n"
             msg += f"   📅 Ngày: <code>{d_display}</code>\n"
@@ -302,12 +300,17 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg:
         await update.message.reply_text(msg, parse_mode="HTML")
 
-# ================= 6. WEB SERVER ĐỂ RENDER CHẠY 24/7 =================
+# ================= 6. WEB SERVER ĐỂ RENDER & UPTIMEROBOT CHẠY 24/7 =================
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot LHU is running 24/7!")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
     def log_message(self, format, *args):
         return
 
@@ -331,7 +334,7 @@ if __name__ == "__main__":
     job_queue.run_daily(job_morning_reminder, time=time(hour=6, minute=0, tzinfo=VN_TZ), name="morning_job")
     job_queue.run_daily(job_evening_reminder, time=time(hour=20, minute=0, tzinfo=VN_TZ), name="evening_job")
     
-    # Quét ngầm mỗi 15 phút (900s). Có biến động ở bất kỳ ngày nào trong 21 ngày tới là báo ngay lập tức.
+    # Quét ngầm mỗi 15 phút (900s)
     job_queue.run_repeating(job_auto_check_updates, interval=900, first=30, name="update_job")
 
     print(">>> Bot Calen LHU đã sẵn sàng chạy ngầm hoàn hảo (Tầm quét 21 ngày)!")
