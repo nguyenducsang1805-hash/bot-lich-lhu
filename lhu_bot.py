@@ -1,5 +1,4 @@
 import json
-import asyncio
 import os
 import html
 from datetime import datetime, timedelta, time, timezone
@@ -9,7 +8,7 @@ import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# ================= 1. CẤU HÌNH HỆ THÔNG =================
+# ================= 1. CẤU HÌNH HỆ THỐNG =================
 TELEGRAM_BOT_TOKEN = "8856605368:AAFI2s8Ma3GlPoJAC19rpLxlibO-7LwmU3U"
 MY_CHAT_ID = "8060536211"
 STUDENT_ID = "125000887"
@@ -29,15 +28,14 @@ def parse_schedule_item(item):
     facility = str(item.get("TenCoSo") or "").strip()
     if facility:
         room = f"{room} ({facility})"
-        
+
     teacher = str(item.get("GiaoVien") or "").strip()
     group = str(item.get("TenNhom") or "").strip()
     status = item.get("TinhTrang", 0)
-    note = str(item.get("GhiChu") or item.get("Note") or item.get("TenLoai") or "").strip()
-    
+
     start_iso = item.get("ThoiGianBD", "")
     end_iso = item.get("ThoiGianKT", "")
-    
+
     date_str = ""
     time_str = ""
     if start_iso:
@@ -47,11 +45,33 @@ def parse_schedule_item(item):
         time_end = end_iso.split("T")[1][:5] if "T" in end_iso else ""
         time_str = f"{time_start} - {time_end}".strip(" -")
 
-    all_text = f"{subject} {room} {note}".lower()
+    # Quét toàn bộ giá trị trong item để bắt chính xác chữ "Nghỉ lễ" hoặc "Báo nghỉ"
+    raw_text = " ".join(str(v) for v in item.values() if v is not None).lower()
+
     is_off = False
-    
-    if status == 1 or "báo nghỉ" in all_text or "nghỉ dạy" in all_text or "hoãn" in all_text or "nghỉ lễ" in all_text:
+    off_type = ""
+
+    if (
+        "nghỉ lễ" in raw_text
+        or "nghi le" in raw_text
+        or bool(item.get("IsNghiLe"))
+        or bool(item.get("NghiLe"))
+        or str(status) == "2"
+    ):
         is_off = True
+        off_type = "Nghỉ lễ"
+    elif (
+        "báo nghỉ" in raw_text
+        or "bao nghi" in raw_text
+        or "nghỉ dạy" in raw_text
+        or "tạm nghỉ" in raw_text
+        or "hoãn" in raw_text
+        or bool(item.get("IsBaoNghi"))
+        or bool(item.get("BaoNghi"))
+        or str(status) == "1"
+    ):
+        is_off = True
+        off_type = "Báo nghỉ"
 
     return {
         "id": item_id,
@@ -61,7 +81,8 @@ def parse_schedule_item(item):
         "date": safe_html(date_str),
         "teacher": safe_html(teacher),
         "group": safe_html(group),
-        "is_off": is_off
+        "is_off": is_off,
+        "off_type": off_type
     }
 
 def fetch_lhu_schedule(student_id: str):
@@ -107,6 +128,19 @@ def fetch_lhu_schedule(student_id: str):
         print(f"Lỗi API: {e}")
         return []
 
+def format_off_alert(item):
+    off_type = item.get("off_type") or "Báo nghỉ"
+    icon = "🎉" if off_type == "Nghỉ lễ" else "🛑"
+    label = off_type.upper()
+    return (
+        f"> {icon} <b>[{label}]</b>\n"
+        f"> • Môn: <s><b>{item['subject']}</b></s>\n"
+        f">   📅 Ngày: <code>{item['date']}</code>\n"
+        f">   ⏰ Giờ: <s>{item['time']}</s>\n"
+        f">   📍 Phòng: <s>{item['room']}</s>\n"
+        f">   📌 Trạng thái: <b>{off_type}</b>"
+    )
+
 # ================= 3. SO SÁNH VÀ PHÁT HIỆN THAY ĐỔI (QUÉT NGẦM) =================
 def detect_schedule_changes(old_list, new_list):
     changes = []
@@ -116,17 +150,11 @@ def detect_schedule_changes(old_list, new_list):
     for key, item in new_map.items():
         if key in old_map:
             old_item = old_map[key]
-            
-            # 1. Báo nghỉ mới
-            if not old_item.get("is_off") and item.get("is_off"):
-                changes.append(
-                    f"> 🛑 <b>[BÁO NGHỈ / NGHỈ LỄ]</b>\n"
-                    f"> • Môn: <s><b>{item['subject']}</b></s>\n"
-                    f">   📅 Ngày: <code>{item['date']}</code>\n"
-                    f">   ⏰ Giờ: <s>{item['time']}</s>\n"
-                    f">   📍 Phòng: <s>{item['room']}</s>"
-                )
-            
+
+            # 1. Mới chuyển sang Nghỉ lễ / Báo nghỉ (hoặc đổi loại nghỉ)
+            if item.get("is_off") and (not old_item.get("is_off") or old_item.get("off_type") != item.get("off_type")):
+                changes.append(format_off_alert(item))
+
             # 2. Đổi phòng / Đổi giờ
             elif not item.get("is_off"):
                 if old_item['room'] != item['room']:
@@ -146,8 +174,10 @@ def detect_schedule_changes(old_list, new_list):
                         f">   📍 Phòng: <code>{item['room']}</code>"
                     )
         else:
-            # 3. Lịch học được thêm mới
-            if not item.get("is_off"):
+            # 3. Lịch mới xuất hiện trong tầm quét 21 ngày
+            if item.get("is_off"):
+                changes.append(format_off_alert(item))
+            else:
                 changes.append(
                     f"> ➕ <b>[LỊCH HỌC CÓ THAY ĐỔI]</b>\n"
                     f"> • Môn: <b>{item['subject']}</b>\n"
@@ -157,7 +187,7 @@ def detect_schedule_changes(old_list, new_list):
                     f">   👨‍🏫 GV: {item['teacher']}"
                 )
 
-    # 4. TRƯỜNG HỢP MÔN HỌC BỊ XÓA HẲN KHỎI HỆ THỐNG
+    # 4. Trường hợp môn học bị xóa hẳn khỏi hệ thống
     for key, old_item in old_map.items():
         if key not in new_map and not old_item.get("is_off"):
             try:
@@ -183,11 +213,10 @@ async def job_morning_reminder(context: ContextTypes.DEFAULT_TYPE):
     schedule = fetch_lhu_schedule(STUDENT_ID)
     today_classes = [c for c in schedule if c.get("date") == today_ymd]
     active_classes = [c for c in today_classes if not c.get("is_off")]
+    off_classes = [c for c in today_classes if c.get("is_off")]
 
-    if not today_classes:
-        msg = f"📚 <b>LỊCH HỌC HÔM NAY ({today_dmy}):</b>\n🌿 Hôm nay bạn không có môn học nào!"
-    elif not active_classes:
-        msg = f"📚 <b>LỊCH HỌC HÔM NAY ({today_dmy}):</b>\n🌿 Hôm nay tất cả các môn đều đã được báo nghỉ, bạn không có môn nào cần đến trường!"
+    if not active_classes:
+        msg = f"📚 <b>LỊCH HỌC HÔM NAY ({today_dmy}):</b>\n🌿 Hôm nay bạn không có lịch học!"
     else:
         msg = f"📚 <b>LỊCH HỌC HÔM NAY ({today_dmy}):</b>\n\n"
         for idx, c in enumerate(active_classes, 1):
@@ -197,7 +226,8 @@ async def job_morning_reminder(context: ContextTypes.DEFAULT_TYPE):
             if c['teacher']:
                 msg += f"   👨‍🏫 GV: {c['teacher']}\n"
             msg += "\n"
-        msg += "<i>*(Các tiết báo nghỉ đã được tự động ẩn)</i>"
+        if off_classes:
+            msg += f"<i>*(Đã ẩn {len(off_classes)} tiết Báo nghỉ / Nghỉ lễ)</i>"
 
     await context.bot.send_message(chat_id=MY_CHAT_ID, text=msg, parse_mode="HTML")
 
@@ -215,7 +245,9 @@ async def job_evening_reminder(context: ContextTypes.DEFAULT_TYPE):
         msg = f"🌙 <b>LỊCH HỌC NGÀY MAI ({tomorrow_dmy}):</b>\n\n"
         for idx, c in enumerate(tomorrow_classes, 1):
             if c.get("is_off"):
-                msg += f"> 🛑 <b>{idx}. <s>{c['subject']}</s></b>  👉 <b>[ ĐÃ BÁO NGHỈ ]</b>\n"
+                off_type = c.get("off_type") or "Báo nghỉ"
+                icon = "🎉" if off_type == "Nghỉ lễ" else "🛑"
+                msg += f"> {icon} <b>{idx}. <s>{c['subject']}</s></b>  👉 <b>[ {off_type.upper()} ]</b>\n"
                 msg += f">   ⏰ Giờ: <s>{c['time']}</s>\n"
                 msg += f">   📍 Phòng: <s>{c['room']}</s>\n"
                 if c['teacher']:
@@ -257,8 +289,8 @@ async def job_auto_check_updates(context: ContextTypes.DEFAULT_TYPE):
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "👋 <b>Bot Calen LHU đã sẵn sàng 24/7!</b>\n\n"
-        "• /today : Lịch hôm nay (Chỉ hiện môn cần học)\n"
-        "• /tomorrow : Lịch ngày mai (Báo rõ môn nào được nghỉ)\n"
+        "• /today : Lịch hôm nay (Tự báo không có lịch nếu nghỉ hết)\n"
+        "• /tomorrow : Lịch ngày mai (Báo rõ Nghỉ lễ / Báo nghỉ)\n"
         "• /week : Danh sách lịch học sắp tới (3 tuần)"
     )
     await update.message.reply_text(msg, parse_mode="HTML")
@@ -284,7 +316,9 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             d_display = c['date']
 
         if c.get("is_off"):
-            msg += f"> 🛑 <b>{idx}. <s>{c['subject']}</s> [BÁO NGHỈ]</b>\n"
+            off_type = c.get("off_type") or "Báo nghỉ"
+            icon = "🎉" if off_type == "Nghỉ lễ" else "🛑"
+            msg += f"> {icon} <b>{idx}. <s>{c['subject']}</s> [{off_type.upper()}]</b>\n"
             msg += f">   📅 Ngày: <code>{d_display}</code>\n"
             msg += f">   ⏰ Giờ: <s>{c['time']}</s>\n"
             msg += f">   📍 Phòng: <s>{c['room']}</s>\n"
@@ -299,6 +333,41 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = ""
     if msg:
         await update.message.reply_text(msg, parse_mode="HTML")
+
+async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xem dữ liệu thô tuần hiện tại từ API trường để kiểm tra mã Nghỉ lễ/Báo nghỉ"""
+    url = "https://tapi.lhu.edu.vn/calen/auth/XemLich_LichSinhVien"
+    now = datetime.now(VN_TZ)
+    current_monday = now - timedelta(days=now.weekday())
+    payload = {
+        "StudentID": str(STUDENT_ID),
+        "Ngay": current_monday.strftime("%Y-%m-%dT00:00:00.000Z"),
+        "PageIndex": 1,
+        "PageSize": 100
+    }
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "Authorization": AUTH_TOKEN,
+        "User-Agent": "Mozilla/5.0"
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        raw_data = response.json().get("data", [])
+        items = []
+        if isinstance(raw_data, list):
+            for sub_list in raw_data:
+                if isinstance(sub_list, list):
+                    for item in sub_list:
+                        if isinstance(item, dict) and "TenMonHoc" in item:
+                            items.append(item)
+        if not items:
+            await update.message.reply_text("Tuần này không có dữ liệu thô nào từ API.")
+            return
+        text = json.dumps(items, ensure_ascii=False, indent=2)
+        for i in range(0, len(text), 3500):
+            await update.message.reply_text(f"<pre>{safe_html(text[i:i+3500])}</pre>", parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"Lỗi debug: {e}")
 
 # ================= 6. WEB SERVER ĐỂ RENDER & UPTIMEROBOT CHẠY 24/7 =================
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -327,13 +396,14 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("today", today_cmd))
     app.add_handler(CommandHandler("tomorrow", tomorrow_cmd))
-    app.add_handler(CommandHandler("tomorow", tomorrow_cmd)) 
+    app.add_handler(CommandHandler("tomorow", tomorrow_cmd))
     app.add_handler(CommandHandler("week", week_cmd))
+    app.add_handler(CommandHandler("debug", debug_cmd))
 
     job_queue = app.job_queue
     job_queue.run_daily(job_morning_reminder, time=time(hour=6, minute=0, tzinfo=VN_TZ), name="morning_job")
     job_queue.run_daily(job_evening_reminder, time=time(hour=20, minute=0, tzinfo=VN_TZ), name="evening_job")
-    
+
     # Quét ngầm mỗi 15 phút (900s)
     job_queue.run_repeating(job_auto_check_updates, interval=900, first=30, name="update_job")
 
