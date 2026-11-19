@@ -31,7 +31,7 @@ def parse_schedule_item(item):
 
     teacher = str(item.get("GiaoVien") or "").strip()
     group = str(item.get("TenNhom") or "").strip()
-    status = item.get("TinhTrang", 0)
+    status = str(item.get("TinhTrang", 0))
 
     start_iso = item.get("ThoiGianBD", "")
     end_iso = item.get("ThoiGianKT", "")
@@ -45,30 +45,22 @@ def parse_schedule_item(item):
         time_end = end_iso.split("T")[1][:5] if "T" in end_iso else ""
         time_str = f"{time_start} - {time_end}".strip(" -")
 
-    # Quét toàn bộ giá trị trong item để bắt chính xác chữ "Nghỉ lễ" hoặc "Báo nghỉ"
     raw_text = " ".join(str(v) for v in item.values() if v is not None).lower()
 
     is_off = False
     off_type = ""
 
-    if (
-        "nghỉ lễ" in raw_text
-        or "nghi le" in raw_text
-        or bool(item.get("IsNghiLe"))
-        or bool(item.get("NghiLe"))
-        or str(status) == "2"
-    ):
+    # TinhTrang == 6 là Nghỉ lễ; TinhTrang == 1 là Báo nghỉ
+    if status == "6" or "nghỉ lễ" in raw_text or "nghi le" in raw_text:
         is_off = True
         off_type = "Nghỉ lễ"
     elif (
-        "báo nghỉ" in raw_text
+        status == "1"
+        or "báo nghỉ" in raw_text
         or "bao nghi" in raw_text
         or "nghỉ dạy" in raw_text
         or "tạm nghỉ" in raw_text
         or "hoãn" in raw_text
-        or bool(item.get("IsBaoNghi"))
-        or bool(item.get("BaoNghi"))
-        or str(status) == "1"
     ):
         is_off = True
         off_type = "Báo nghỉ"
@@ -335,7 +327,7 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="HTML")
 
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xem dữ liệu thô tuần hiện tại từ API trường để kiểm tra mã Nghỉ lễ/Báo nghỉ"""
+    """Xem dữ liệu thô tuần hiện tại từ API trường để kiểm tra mã TinhTrang"""
     url = "https://tapi.lhu.edu.vn/calen/auth/XemLich_LichSinhVien"
     now = datetime.now(VN_TZ)
     current_monday = now - timedelta(days=now.weekday())
